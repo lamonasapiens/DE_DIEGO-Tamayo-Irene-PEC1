@@ -1,0 +1,368 @@
+---
+title: "PEC 1\nAnálisis metabolómico de pacientes caquéxicos"
+author: "Irene de Diego Tamayo"
+date: "2024-11-03"
+output:
+  html_document: 
+    toc: true
+  pdf_document:
+    toc: true
+---
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+if(!(require("BiocManager"))) install.packages("BiocManager")
+if(!(require(SummarizedExperiment))) install.packages("SummarizedExperiment")
+if(!(require(tidyverse))) install.packages("tidyverse")
+if(!(require(pheatmap))) install.packages("pheatmap")
+if(!(require(ggplot2))) install.packages("ggplot2")
+if(!(require(limma))) install.packages("limma")
+
+BiocManager::install("Biobase")
+```
+
+# Introducción
+
+La caquexia es un síndrome que se caracteriza por la pérdida continua de peso, incluyendo masa muscular esquelética, grasa y hueso, que conyeva serias deficiencias nutricionales, pérdida de apetito y extrema debilidad. Esta condición se desarrolla con frecuencia en personas con enfermedades crónicas como el cáncer, infecciones, cardiovasculares y otras enfermedades graves.
+
+En la caquexia, la pérdida de masa muscular se produce debido a un constante estado catabólico, pérdida del apetito y aumento de la inflamación. Es muy común que, ante la falta de nutrientes esenciales, el cuerpo entre en estado de cetosis.
+
+En el presente trabajo se realiza una exploración superficial de los datos obtenidos del dataset *human.cachexia*, un estudio metabolómico que compara pacientes caquéxicos con un grupo control. El análisis exploratorio constará de un análisis superficial de la distribución de los datos, seguido por un análisis de componentes principales y un análisis de expresión diferencial.
+
+<br>
+
+<br>
+
+# Objetivos
+
+-   Realizar una primera exploración de los datos
+
+-   Comprobar si existen diferencias en los metabolitos de pacientes caquéxicos vs grupo control.
+
+<br>
+
+<br>
+
+# Materiales y métodos
+
+El dataset se descargó del repositorio de github: [[nutrimetabolomics]{.underline}](https://github.com/nutrimetabolomics/metaboData/tree/main/Datasets) con el nombre *2024-Cachexia.*
+
+El análisis exploratorio se realizó con R-studio. Los paquetes utilizados se detallan a continuación:
+
+-   Bioconductor (Biobase)
+-   SummarizedExperiment
+-   Tidyverse
+-   Pheatmap
+-   Ggplot2
+-   Limma
+
+El documento de R-Marckdown contiene las instrucciones necesarias para instalar estos paquetes de forma automática.
+
+Todos los archivos necesarios para realizar el presente trabajo pueden encontrarse en el repositorio de github: [[DE_DIEGO-Tamayo-Irene-PEC1]{.underline}](https://github.com/lamonasapiens/DE_DIEGO-Tamayo-Irene-PEC1)[.]{.underline}
+
+<br>
+
+<br>
+
+# Exploración de los datos e interpretación
+
+Cargamos los paquetes necesarios:
+
+```{r message=FALSE, warning=FALSE}
+library(Biobase)
+library(SummarizedExperiment)
+library(tidyverse)
+library(pheatmap)
+library(ggplot2)
+library(limma)
+```
+
+<br>
+
+<br>
+
+## 1. Cargado de los datos y creación del SummarizedExperiment
+
+```{r}
+cac <- read.csv("human_cachexia.csv")
+```
+
+<br>
+
+**Primera exploración de los datos:**
+
+```{r}
+str(cac)
+```
+
+El archivo contiene 77 observaciones y 65 variables, de las cuales 2 corresponden a metadatos:
+
+-   *Patient.ID*: número de identificación del paciente
+
+-   *Muscle.Loss*: variable que segrega a los pacientes en dos grupos: "cachexic" y "control"
+
+La variable *Muscle.Loss* debería ser de tipo factor pero está mal caracterizada como tipo caracter, así que la transformamos:
+
+```{r}
+cac$Muscle.loss <- as.factor(cac$Muscle.loss)
+```
+
+<br>
+
+**Creación del objeto `SummarizedExperiment`**
+
+Para crear un objeto `SummarizedExperiment`, primero debemos extraer los datos de expresión en una matriz (*assay*) y los metadatos en otra (*colData*).
+
+Comenzamos por la matriz de datos (excluyendo los metadatos *"Patient.ID"* y *"Muscle.Loss"*):
+
+```{r}
+datos <- as.matrix(cac[, -c(1, 2)])
+rownames(datos) <- cac$Patient.ID
+datos <- t(datos) # transponemos la matriz
+```
+
+<br>
+
+A continuación, creamos la matriz *colData* con los metadatos:
+
+```{r}
+col_data <- DataFrame(Patient_ID = cac$Patient.ID,
+                      Muscle_loss = cac$Muscle.loss)
+rownames(col_data) <- cac$Patient.ID
+```
+
+<br>
+
+Finalmente, creamos el objeto `SummarizedExperiment` usando `col_data` y la matriz `datos`
+
+```{r}
+# Creamos el objeto SummarizedExperiment
+se <- SummarizedExperiment(
+  assays = list(metabolites = datos),
+  colData = col_data
+  )
+
+se
+```
+
+<br>
+
+<br>
+
+## 2. Análisis exploratorio básico
+
+Antes de nada, comprobamos si existen valores faltantes (*missing values*):
+
+```{r}
+sum(is.na(assay(se)))
+```
+
+No hay ningún valor faltante, así que procedemos con el análisis exploratorio. Primero, observamos la distribución de muestras en cada grupo:
+
+```{r}
+table(colData(se)$Muscle_loss) 
+```
+
+<br>
+
+**Cálculo de estadísticos básicos:**
+
+```{r}
+met_stats <- data.frame(
+  Mean = rowMeans(datos),
+  SD = apply(datos, 1, sd),
+  Median = apply(datos, 1, median),
+  IQR = apply(datos, 1, IQR)
+)
+
+met_stats
+```
+
+<br>
+
+Creamos un violin plot para visualizar la distribución de los datos de expresión:
+
+```{r}
+metabol <- as.data.frame(datos) %>%
+  rownames_to_column("Metabolite") %>%
+  pivot_longer(-Metabolite, names_to = "Sample", values_to = "Value")
+
+ggplot(metabol, aes(x = Metabolite, y = Value)) +
+  geom_violin() +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(title = "Distribution of Metabolite Values",
+       x = "Metabolites",
+       y = "Expression Values")
+```
+
+En este gráfico, vemos los niveles de expresión de cada metabolito en el conjunto de muestras. Los metabolitos *Creatine, Guanidoacetate* y *cis.Aconitrate* son los que presentan un mayor nivel de expresión. No obstante, ello no nos da información sobre las diferencias en expresión entre cada grupo (veremos esto más adelante).
+
+<br>
+
+**Cálculo y visualización de correlaciones:**
+
+```{r}
+cor_matrix <- cor(t(assay(se)))
+pheatmap(cor_matrix,
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         main = "Metabolite Correlation Heatmap",
+         fontsize_row = 5)
+```
+
+En este gráfico vemos si existe correlación entre la expresión de ciertos metabolitos. El color rojo/naranja indica una alta correlación, por lo que son metabolitos que suelen co-expresarse.
+
+Para tener una idea más clara de cuáles son los metabolitos con una mayor correlación, procedemos a generar una lista de las correlaciones más fuertes:
+
+```{r}
+# Convertimos la matriz en un data frame
+cor_df <- as.data.frame(as.table(cor_matrix))
+
+# Filtramos las correlaciones de cada variable consigo misma (diagonal)
+cor_df <- cor_df[cor_df$Var1 != cor_df$Var2, ]
+
+# Ordenamos las correlaciones por nivel de magnitud
+cor_df <- cor_df[order(-abs(cor_df$Freq)), ]
+
+# Filtramos los duplicados eliminando todas las líneas pares
+top_cor <- cor_df[seq(1, nrow(cor_df), by = 2), ]
+
+# Seleccionamos las 10 correlaciones más fuertes
+head(top_cor, 10)
+
+```
+
+<br>
+
+<br>
+
+## 3. Análisis de componentes principales
+
+En este apartado procedemos a reducir la dimensionalidad de nuestros datos usando un análisis de componentes principales.
+
+```{r}
+pca_result <- prcomp(t(assay(se)), scale. = TRUE)
+```
+
+Queremos ver qué componentes explican la mayor parte de la varianza en nuestros datos. Para ello, extraemos primero las varianzas explicadas por cada componente:
+
+```{r}
+loads <- round(pca_result$sdev^2 / sum(pca_result$sdev^2) * 100, 1) 
+```
+
+Y calculamos la varianza acumulada:
+
+```{r}
+cumulative_var <- cumsum(loads)
+cumulative_var
+```
+
+<br>
+
+Vemos que los 11 primeros PCs explican el 80.5% de la varianza.
+
+Para visualizar estas relaciones, podemos realizar un plot con los primeros dos PCs, los cuales explican el 48.6% de la varianza total.
+
+```{r}
+# seleccionamos sólo los dos primeros componentes principales
+pca_data <- as.data.frame(pca_result$x[,1:2]) 
+# Extraemos los grupos cachexic y control
+pca_data$Muscle_loss <- colData(se)$Muscle_loss 
+
+# Construimos el plot:
+ggplot(pca_data, aes(x = PC1, y = PC2, color = Muscle_loss)) +
+  geom_point(size = 3) +
+  theme_bw() +
+  labs(title = "PCA Plot of Metabolite Profiles",
+       x = paste0("PC1 (", round(summary(pca_result)$importance[2,1] * 100, 1), "%)"),
+       y = paste0("PC2 (", round(summary(pca_result)$importance[2,2] * 100, 1), "%)"))
+```
+
+<br>
+
+Aunque hay solapamiento, vemos que el PC1 es capaz de separar a ambos grupos: los individuos caquéxicos tienden a tener valores más altos en PC1 que los del grupo control.
+
+Finalmente, inspeccionamos qué metabolitos están contribuyendo más fuertemente en el PC1.
+
+```{r}
+PC1_loads <- pca_result$rotation[,1]
+head(sort(PC1_loads, decreasing = TRUE))
+```
+
+<br>
+
+El resultado es interesante, ya que estos metabolitos están relacionados con el daño muscular, inflamación y síntesis proteica.
+
+-   La creatinina es un producto de desecho de células musculares que se eleva en situaciones de daño muscular y/o filtrado deficiente de los riñones, lo cual suele ser típico en pacientes cachexicos.
+
+-   La glutamina es un aminoácido implicado en la síntesis de nucleótidos y proteínas, y juega un papel crítico en el sistema inmunitario. Niveles bajos de este metabolito podrían reflejar un mayor uso en procesos inflamatorios (la caquexia está asociada a inflamación sistémica).
+
+-   La etanolamina sirve como precursor de fosfolípidos. Alteraciones en sus niveles pueden indicar cambios en la composición de membranas celulares y estrés celular.
+
+-   La asparagina, treonina y valina son aminoácidos que juegan un papel importante en el transporte de nitrógeno y la síntesis proteica. Debido a que la caquexia aumenta la tasa de destrucción de músculo, es esperable encontrar niveles alterados de ciertos aminoácidos.
+
+<br>
+
+<br>
+
+## 4. Análisis de expresión diferencial
+
+Tras la exploración superficial de los datos, procedemos a realizar un análisis más sofisticado que nos muestre diferencias entre los grpos cachexic y control. Para ello, usaremos el análisis de expresión diferencial.
+
+```{r}
+# Creamos la matriz de diseño
+design <- model.matrix(~ Muscle_loss, data = colData(se))
+
+# Ajustamos el modelo lineal a los datos de expresión
+fit <- lmFit(assay(se), design)
+
+# Aplicamos la moderación Bayesiana para ajustar los p-valores
+fit <- eBayes(fit)
+
+# Obtención de los resultados (cachexic vs. control)
+res <- topTable(fit, coef = "Muscle_losscontrol", number = Inf)
+
+# Filtramos los resultados más significativos (e.g., adjusted p-value < 0.01)
+significant_res <- res[res$adj.P.Val < 0.01, ]
+significant_res
+```
+
+<br>
+
+A continuación, observamos los datos en un volcano plot
+
+```{r}
+ggplot(res, aes(x = logFC, y = -log10(adj.P.Val))) +
+  geom_point(aes(color = adj.P.Val < 0.01), alpha = 0.6) +
+  scale_color_manual(values = c("grey", "red")) +
+  labs(title = "Volcano Plot", x = "Log2 Fold Change", y = "-Log10 Adjusted P-Value") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "blue")
+```
+
+En rojo vemos los metabolitos estadísticamente significativos al 99% de confianza.
+
+Comprobamos que nuestra lista incluye los metabolitos observados en el PC1. Parece que la creatinina y los aminoácidos son importantes marcadores de esta enfermedad. A mayores, los pacientes caquéxicos presentan una mayor cantidad de metabolitos involucrados en procesos proinflamatorios y metabólicos. En concreto, X3.Hidroxibutirato es un cuerpo cetónico que se produce en condiciones de cetosis y restricción calórica, donde se utilizan las grasas como principal fuente de energía.
+
+<br>
+
+<br>
+
+# Conclusiones
+
+Nuestro análisis superficial de los datos reveló las diferencias en los niveles de ciertos metabolitos en pacientes caquéxicos vs control. Los metabolitos que parecen contribuir en mayor medida al fenotipo caquexia fueron los siguientes:
+
+-   Creatinine
+-   Glutamine
+-   Ethanolamine
+-   Asparagine
+-   Threonine
+-   Valine
+-   Quinolinate
+-   N.N.Dimethylglycine
+-   Dimethylamine
+-   Pyroglutamate
+-   X3.Hydroxybutyrate
+
+Los niveles más altos de estos metabolitos en pacientes caquésicos sugieren que existen alteraciones metabólicas debido a la pérdida de peso, en concreto de masa muscular, estrés metabólico e inflamación.
